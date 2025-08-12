@@ -39,4 +39,4 @@ Resources:
       #childDirected field.
       DataPrivacy:
         ChildDirected: false
-      IdleSessionTTLInSeconds: 300
+      IdleSessionTTLInSeconds: 100
