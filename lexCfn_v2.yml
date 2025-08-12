@@ -1,0 +1,42 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Cloud Formation template for book hotel bot.
+Resources:
+  # 1. IAM role that is used by the bot at runtime
+  BotRuntimeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lexv2.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+      Policies:
+        - PolicyName: LexRuntimeRolePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "polly:SynthesizeSpeech"
+                  - "comprehend:DetectSentiment"
+                Resource: "*"
+  InsuranceChatBot:
+    DependsOn: BotRuntimeRole # The role created in the previous step
+    Type: AWS::Lex::Bot
+    Properties:
+      Name: "InsuranceChatBot"
+      Description: "Bot to Claim Insurance and other Inquiries"
+      RoleArn: !GetAtt BotRuntimeRole.Arn
+      #For each Amazon Lex bot created with the Amazon Lex Model Building Service, you must specify whether your use of Amazon Lex
+      #is related to a website, program, or other application that is directed or targeted, in whole or in part, to children under
+      #age 13 and subject to the Children's Online Privacy Protection Act (COPPA) by specifying true or false in the
+      #childDirected field.
+      DataPrivacy:
+        ChildDirected: false
+      IdleSessionTTLInSeconds: 300
