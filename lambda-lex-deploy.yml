@@ -1,0 +1,283 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Pipeline to build and deploy Lambda + Lex bot with CodePipeline and CodeBuild,
+  using inline Lambda code injected from app.py in GitHub.
+
+Parameters:
+  GitHubRepo:
+    Type: String
+    Default: nethra4596/Insurancechatbot
+    Description: GitHub repo name, e.g. user/repo
+  GitHubBranch:
+    Type: String
+    Default: main
+    Description: GitHub branch to build
+  CodeStarConnectionArn:
+    Type: String
+    Description: ARN of the AWS CodeStar Connection for GitHub
+
+Resources:
+  # IAM Role for Lambda execution
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: LambdaBasicExecution
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  # Lambda Function with inline code placeholder
+  MyLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: LexHookLambda
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.9
+      Timeout: 10
+      Code:
+        ZipFile: |
+          {{LAMBDA_CODE}}
+
+  # IAM Role for Lex Bot
+  LexBotExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lex.amazonaws.com
+            Action: sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: LexBotPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+
+  # Lex Bot definition with inline intent and Lambda code hook
+  MyLexBot:
+    Type: AWS::Lex::Bot
+    Properties:
+      BotName: MyInlineLexBot
+      DataPrivacy:
+        ChildDirected: false
+      IdleSessionTTLInSeconds: 300
+      RoleArn: !GetAtt LexBotExecutionRole.Arn
+      BotLocales:
+        - LocaleId: en_US
+          Description: "English (US)"
+          NluConfidenceThreshold: 0.4
+          VoiceSettings:
+            VoiceId: Joanna
+          Intents:
+            - Name: HelloIntent
+              SampleUtterances:
+                - Utterance: "hello"
+                - Utterance: "hi"
+              FulfillmentCodeHook:
+                Enabled: true
+
+  # Lex Bot Version to publish the draft bot
+  MyLexBotVersion:
+    Type: AWS::Lex::BotVersion
+    Properties:
+      BotId: !Ref MyLexBot
+      BotVersionLocaleSpecification:
+        - LocaleId: en_US
+          BotVersionLocaleDetails:
+            SourceBotVersion: DRAFT
+
+  # Lex Bot Alias set to the published version
+  MyLexBotAlias:
+    Type: AWS::Lex::BotAlias
+    Properties:
+      BotAliasName: Live
+      BotId: !Ref MyLexBot
+      BotVersion: !Ref MyLexBotVersion
+      BotAliasLocaleSettings:
+        en_US:
+          Enabled: true
+          CodeHookSpecification:
+            LambdaCodeHook:
+              LambdaArn: !GetAtt MyLambdaFunction.Arn
+              CodeHookInterfaceVersion: "1.0"
+
+  # IAM role assumed by CodeBuild
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: CodeBuildAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudformation:DeployStack
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DeleteStack
+                  - iam:PassRole
+                  - lambda:UpdateFunctionCode
+                  - lex:*
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - s3:GetObject
+                Resource: "*"
+
+  # CodeBuild project to build and deploy stack
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: LexLambdaBuildProject
+      Source:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: STACK_NAME
+            Value: LexLambdaStack
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      TimeoutInMinutes: 20
+
+  # IAM Role for CodePipeline
+  CodePipelineServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: CodePipelineAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetProjects
+                  - cloudformation:DescribeStacks
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteStack
+                  - cloudformation:UpdateStack
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                  - sts:AssumeRole
+                  - iam:PassRole
+                Resource: "*"
+
+  # CodePipeline definition
+  LexLambdaPipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: LexLambdaPipeline
+      RoleArn: !GetAtt CodePipelineServiceRole.Arn
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: GitHubSource
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: 1
+              OutputArtifacts:
+                - Name: SourceOutput
+              Configuration:
+                ConnectionArn: !Ref CodeStarConnectionArn
+                FullRepositoryId: !Ref GitHubRepo
+                BranchName: !Ref GitHubBranch
+                DetectChanges: true
+              RunOrder: 1
+        - Name: Build
+          Actions:
+            - Name: BuildAndDeploy
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: 1
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: BuildOutput
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+              RunOrder: 1
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+
+  # S3 bucket to store artifacts (pipeline)
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+
+Outputs:
+  PipelineName:
+    Description: CodePipeline pipeline name
+    Value: !Ref LexLambdaPipeline
+  LambdaFunctionArn:
+    Description: Lambda Function ARN
+    Value: !GetAtt MyLambdaFunction.Arn
+  LexBotId:
+    Description: Lex Bot ID
+    Value: !Ref MyLexBot
+  LexBotAliasId:
+    Description: Lex Bot Alias ID
+    Value: !Ref MyLexBotAlias
+  CodeBuildProjectName:
+    Description: CodeBuild Project name
+    Value: !Ref CodeBuildProject
+  ArtifactBucketName:
+    Description: S3 Artifact Bucket Name
+    Value: !Ref ArtifactBucket

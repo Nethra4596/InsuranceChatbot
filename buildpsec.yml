@@ -1,0 +1,20 @@
+version: 0.2
+phases:
+  install:
+    runtime-versions:
+      python: 3.9
+  build:
+    commands:
+      - echo "Injecting app.py into CloudFormation template..."
+      - LAMBDA_CODE=$(sed 's/^/          /' app.py)
+      - sed "s|{{LAMBDA_CODE}}|$LAMBDA_CODE|" lambda-lex-deploy.yaml.template > lambda-lex-deploy.yaml
+      - echo "Generated template:"
+      - cat lambda-lex-deploy.yaml
+  post_build:
+    commands:
+      - echo "Deploying Lambda + Lex..."
+      - aws cloudformation deploy \
+          --template-file lambda-lex-deploy.yaml \
+          --stack-name LexLambdaStack \
+          --capabilities CAPABILITY_IAM \
+          --region us-east-1
