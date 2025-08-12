@@ -280,4 +280,4 @@ Outputs:
     Value: !Ref CodeBuildProject
   ArtifactBucketName:
     Description: S3 Artifact Bucket Name
-    Value: !Ref ArtifactBucket
+    Value: !Ref ArtifactBucket 
